@@ -563,112 +563,106 @@ def home():
 # =========================================================
 
 def private_chat():
-
     st.title("🔐 Private Chat")
+    st.caption("Find people and start a private conversation.")
 
+    # Get current user's ID
     current_user = st.session_state.user.id
 
-    profiles = (
+    # Search people
+    search = st.text_input(
+        "🔎 Search people",
+        placeholder="Search by username..."
+    )
+
+    # Get profiles
+    query = (
         supabase
         .table("profiles")
-        .select("*")
-        .neq(
-            "id",
-            current_user
-        )
+        .select("id, username, bio")
+        .neq("id", current_user)
         .order("username")
-        .execute()
     )
 
-    if not profiles.data:
+    if search.strip():
+        query = query.ilike("username", f"%{search.strip()}%")
 
-        st.info(
-            "There are no other users yet."
-        )
+    response = query.execute()
+    users = response.data or []
 
+    st.subheader("👥 People")
+
+    if not users:
+        if search.strip():
+            st.info(f'No users found for "{search}".')
+        else:
+            st.info("There are no other users yet.")
         return
 
+    # Show people
+    for user in users:
+        username = user.get("username") or "Unknown"
+        bio = user.get("bio") or "No bio yet."
 
-    usernames = {
-        profile["username"]: profile["id"]
-        for profile in profiles.data
-    }
+        with st.container(border=True):
+            col1, col2 = st.columns([4, 1])
 
-    selected_username = st.selectbox(
-        "Chat with",
-        list(usernames.keys())
-    )
+            with col1:
+                st.markdown(f"### 👤 @{username}")
+                st.caption(bio)
 
-    other_user = usernames[
-        selected_username
-    ]
+            with col2:
+                if st.button(
+                    "💬 Chat",
+                    key=f"chat_{user['id']}"
+                ):
+                    st.session_state.chat_user_id = user["id"]
+                    st.session_state.chat_username = username
+                    st.rerun()
 
+    # Open selected conversation
+    if "chat_user_id" not in st.session_state:
+        return
+
+    chat_user_id = st.session_state.chat_user_id
+    chat_username = st.session_state.chat_username
 
     st.divider()
 
+    st.subheader(f"💬 Chat with @{chat_username}")
+
+    # Load messages
     messages = (
         supabase
         .table("messages")
         .select("*")
         .or_(
-            f"and(sender_id.eq.{current_user},"
-            f"receiver_id.eq.{other_user}),"
-            f"and(sender_id.eq.{other_user},"
-            f"receiver_id.eq.{current_user})"
+            f"and(sender_id.eq.{current_user},receiver_id.eq.{chat_user_id}),"
+            f"and(sender_id.eq.{chat_user_id},receiver_id.eq.{current_user})"
         )
-        .order(
-            "created_at"
-        )
+        .order("created_at")
         .execute()
     )
 
-
-    for message in messages.data:
-
+    for message in messages.data or []:
         if message["sender_id"] == current_user:
-
-            st.success(
-                f"You: {message['content']}"
-            )
-
+            st.chat_message("user").write(message["content"])
         else:
+            st.chat_message("assistant").write(message["content"])
 
-            st.info(
-                f"{selected_username}: "
-                f"{message['content']}"
-            )
-
-
-    message_text = st.text_input(
-        "Message",
-        placeholder="Write a private message..."
+    # Send message
+    message = st.chat_input(
+        f"Message @{chat_username}..."
     )
 
-    if st.button(
-        "📨 Send Message",
-        use_container_width=True
-    ):
+    if message:
+        supabase.table("messages").insert({
+            "sender_id": current_user,
+            "receiver_id": chat_user_id,
+            "content": message
+        }).execute()
 
-        if message_text.strip():
-
-            supabase.table(
-                "messages"
-            ).insert({
-
-                "sender_id":
-                    current_user,
-
-                "receiver_id":
-                    other_user,
-
-                "content":
-                    message_text.strip()
-
-            }).execute()
-
-            st.rerun()
-
-
+        st.rerun()
 # =========================================================
 # PROFILE
 # =========================================================
